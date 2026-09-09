@@ -162,6 +162,34 @@ async function runInteractiveSetupInProcess(opts: {
   }
 }
 
+/** OpenClaw 2026.7+ requires register() to stay synchronous — never return a Promise from register. */
+function schedulePostInstallSetup(
+  pluginConfig: Record<string, unknown>,
+  logger?: { warn?: (m: string) => void },
+) {
+  if (!process.stdin.isTTY) return;
+  setImmediate(() => {
+    const setupEnv = { ...process.env };
+    if (Object.keys(pluginConfig).length > 0) {
+      try {
+        setupEnv.OPENCLAW_CURSOR_BRAIN_UPGRADE_INITIAL_CONFIG = JSON.stringify(pluginConfig);
+      } catch {}
+    }
+    try {
+      execSync("openclaw cursor-brain setup", {
+        encoding: "utf-8",
+        stdio: "inherit",
+        timeout: 600000,
+        env: setupEnv,
+      });
+    } catch (e: any) {
+      if (e?.status !== undefined && e.status !== 0) {
+        logger?.warn?.(`Setup exited with code ${e.status}`);
+      }
+    }
+  });
+}
+
 function readPackageVersion(dir: string): string {
   try {
     return JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")).version || "unknown";
@@ -866,10 +894,17 @@ const plugin = {
       if (result.cursorPath && result.mcpConfigured) {
         api.logger.info("Cursor Brain setup complete");
       }
-      const runInteractiveSetup = isPluginsInstall && result.cursorPath && result.cursorModels.length > 0 && !!process.stdin.isTTY;
-      if (isPluginsInstall && result.cursorPath && !runInteractiveSetup) {
+      const shouldRunPostInstallSetup =
+        isPluginsInstall && result.cursorPath && result.cursorModels.length > 0 && !!process.stdin.isTTY;
+      if (isPluginsInstall && result.cursorPath && !shouldRunPostInstallSetup) {
         api.logger.info("Run 'openclaw cursor-brain setup' to choose primary/fallback models (optional), then restart your gateway to start.");
       }
+      let postInstallSetupScheduled = false;
+      const maybeSchedulePostInstallSetup = () => {
+        if (!shouldRunPostInstallSetup || postInstallSetupScheduled) return;
+        postInstallSetupScheduled = true;
+        schedulePostInstallSetup(pluginConfig as Record<string, unknown>, api.logger);
+      };
 
       const proxyPort = parseProxyPort(pluginConfig.proxyPort);
       const existingProviders = (config as any).models?.providers ?? {};
@@ -897,7 +932,7 @@ const plugin = {
               `Skipping provider sync: model discovery returned 0 models; keeping existing ${existingModelCount} models`,
             );
             doSyncInstallRecord();
-            if (runInteractiveSetup) return runInteractiveSetupInProcess({ pluginDir, config, pluginConfig: pluginConfig as Record<string, unknown>, result, proxyPort });
+            maybeSchedulePostInstallSetup();
           } else {
           const newProviderConfig = buildProviderConfig(proxyPort, discovered);
           const providerUnchanged = existingProvider &&
@@ -926,7 +961,7 @@ const plugin = {
             } catch (e: any) {
               api.logger.warn(`Could not set default model: ${e?.message ?? String(e)}`);
             }
-            if (runInteractiveSetup) return runInteractiveSetupInProcess({ pluginDir, config, pluginConfig: pluginConfig as Record<string, unknown>, result, proxyPort });
+            maybeSchedulePostInstallSetup();
           } else {
             // Read fresh config from disk rather than using api.config snapshot,
             // which may contain stale plugins data (e.g. during install subprocess
@@ -978,12 +1013,12 @@ const plugin = {
                 writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(patch, null, 2) + "\n");
                 api.logger.info(`Provider "${PROVIDER_ID}" synced (${discovered.length} models, port ${proxyPort})`);
                 doSyncInstallRecord();
-                if (runInteractiveSetup) return runInteractiveSetupInProcess({ pluginDir, config, pluginConfig: pluginConfig as Record<string, unknown>, result, proxyPort });
+                maybeSchedulePostInstallSetup();
                 setImmediate(() => fixInstallRecordSourceOnDisk(pluginDir));
               } catch (err: any) {
                 api.logger.warn(`Could not write config: ${err?.message ?? String(err)}`);
                 doSyncInstallRecord();
-                if (runInteractiveSetup) return runInteractiveSetupInProcess({ pluginDir, config, pluginConfig: pluginConfig as Record<string, unknown>, result, proxyPort });
+                maybeSchedulePostInstallSetup();
                 setImmediate(() => fixInstallRecordSourceOnDisk(pluginDir));
               }
             } else {
