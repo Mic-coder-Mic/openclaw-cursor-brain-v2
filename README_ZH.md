@@ -33,19 +33,74 @@
 
 - [OpenClaw](https://github.com/openclaw/openclaw) 已全局安装（`npm i -g openclaw`）
 - Node.js ≥ 18
+- **无图形界面的 VPS / Linux 服务器：** 用 `curl https://cursor.com/install -fsS | bash` 安装 Cursor Agent CLI，再用 `NO_OPEN_BROWSER=1 cursor-agent login` 登录（建议 `ssh -t` 以便显示登录链接/验证码）
 
-## 快速开始
+## 安装
+
+### 本地克隆 / git 源码
+
+插件源码为 **TypeScript**。OpenClaw 运行时加载 `./dist/index.js` — **刚 clone 的仓库没有 `dist/` 目录**，必须先编译。
 
 ```bash
-openclaw plugins install openclaw-cursor-brain # 安装与默认配置
-openclaw gateway restart                       # 重启服务
-openclaw cursor-brain doctor                   # 验证
+git clone https://github.com/Mic-coder-Mic/openclaw-cursor-brainV2.git
+cd openclaw-cursor-brainV2
+
+npm install          # 安装依赖（含 TypeScript）
+npm run build        # 生成 dist/index.js — 安装前必做
+ls dist/index.js     # 必须存在
+
+openclaw plugins install ./
+openclaw gateway restart
+openclaw cursor-brain doctor
+openclaw cursor-brain setup
+openclaw gateway restart
 ```
 
-**主/备模型选择**（可选）：在终端为 TTY 时，**`openclaw plugins install`** 完成后会自动进入交互式选择；若非 TTY 或未弹出，可手动执行：
+若出现 **`runtime extension entry not found: ./dist/index.js`**，说明未执行 `npm run build`。先 build，再重新 install。
+
+**从本地目录升级**（保留配置并重新 setup）：
 
 ```bash
-openclaw cursor-brain setup   # 可选：选择主模型与备用模型
+cd /path/to/openclaw-cursor-brainV2
+npm run build
+openclaw cursor-brain upgrade ./
+openclaw gateway restart
+```
+
+### VPS / 无头服务器清单
+
+1. 安装 OpenClaw，确认 Gateway 已配置（`openclaw gateway status`）。
+2. 安装 Cursor Agent CLI：`curl https://cursor.com/install -fsS | bash`
+3. 登录 Cursor（必做 — 未登录时 doctor 会失败）：
+
+   ```bash
+   NO_OPEN_BROWSER=1 cursor-agent login
+   cursor-agent status
+   ```
+
+4. 安装插件（见上文）。
+5. 将主模型设为 Cursor，而非 Anthropic：
+
+   ```bash
+   openclaw config set agents.defaults.model.primary "cursor-local/auto"
+   openclaw gateway restart
+   ```
+
+6. 验证：
+
+   ```bash
+   openclaw cursor-brain doctor
+   curl -s http://127.0.0.1:18790/v1/health
+   ```
+
+交互式 `setup` / 模型选择请用 **`ssh -t user@host`**。非 TTY 环境请在安装后手动执行 `openclaw cursor-brain setup`。
+
+### 安装后 — 主/备模型选择
+
+在 TTY 终端下，**`openclaw plugins install`** 完成后可能会自动进入交互式选择；若非 TTY 或未弹出，可手动执行：
+
+```bash
+openclaw cursor-brain setup   # 选择主模型与备用模型
 openclaw gateway restart      # 若改了配置需重启
 ```
 
@@ -292,6 +347,7 @@ curl http://127.0.0.1:18790/v1/chat/completions \
 
 | 问题                                                               | 解决                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`runtime extension entry not found: ./dist/index.js`**           | 安装前未编译。在仓库目录执行 `npm install && npm run build`，确认存在 `dist/index.js` 后重新 `openclaw plugins install ./`。                                                                                                                                                          |
 | **WARNING: dangerous code patterns (child_process / env+network)** | OpenClaw 安装时会扫描插件并可能显示此告警。本插件需使用 `child_process` 运行 Cursor agent 与 proxy，并读取环境变量（如 `CURSOR_PATH`）进行配置。插件仅向子进程传递最小化白名单环境变量，不会传递完整 `process.env`。可放心忽略此告警。                                                                                                                                                    |
 | **卡在「Provider synced」后不退出**                                | 旧版在 `plugins install` 时会启动 proxy/定时器导致进程不退出；新版已修复，安装会正常结束。请升级到最新版。                                                                                                                                                                                                                                                                                |
 | **安装时没有主/备模型选择**                                        | 需在 TTY 终端下安装才会自动弹出；否则安装后执行 `openclaw cursor-brain setup` 即可。                                                                                                                                                                                                                                                                                                      |

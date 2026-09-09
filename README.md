@@ -33,19 +33,74 @@
 
 - [OpenClaw](https://github.com/openclaw/openclaw) installed globally (`npm i -g openclaw`)
 - Node.js ≥ 18
+- **Headless VPS / Linux server:** Cursor Agent CLI via `curl https://cursor.com/install -fsS | bash`, then authenticate with `NO_OPEN_BROWSER=1 cursor-agent login` (use `ssh -t` so the login URL/code is shown)
 
-## Quick Start
+## Installation
+
+### Local clone / git checkout
+
+The plugin source is **TypeScript**. OpenClaw loads `./dist/index.js` at runtime — a fresh clone has **no `dist/` folder** until you build.
 
 ```bash
-openclaw plugins install openclaw-cursor-brain # install & default config
-openclaw gateway restart                       # restart gateway
-openclaw cursor-brain doctor                   # verify
+git clone https://github.com/Mic-coder-Mic/openclaw-cursor-brainV2.git
+cd openclaw-cursor-brainV2
+
+npm install          # deps + TypeScript
+npm run build        # creates dist/index.js — required before install
+ls dist/index.js     # must exist
+
+openclaw plugins install ./
+openclaw gateway restart
+openclaw cursor-brain doctor
+openclaw cursor-brain setup
+openclaw gateway restart
 ```
 
-**Model selection** (optional): In a TTY, interactive model selection may run automatically after install. Otherwise run:
+If you see **`runtime extension entry not found: ./dist/index.js`**, you skipped `npm run build`. Run build, then install again.
+
+**Upgrade from a local directory** (preserves config, re-runs setup):
 
 ```bash
-openclaw cursor-brain setup   # optional: choose primary & fallback models
+cd /path/to/openclaw-cursor-brainV2
+npm run build
+openclaw cursor-brain upgrade ./
+openclaw gateway restart
+```
+
+### VPS / headless server checklist
+
+1. Install OpenClaw and ensure Gateway is configured (`openclaw gateway status`).
+2. Install Cursor Agent CLI: `curl https://cursor.com/install -fsS | bash`
+3. Log in (required — doctor fails without this):
+
+   ```bash
+   NO_OPEN_BROWSER=1 cursor-agent login
+   cursor-agent status
+   ```
+
+4. Install the plugin (see above).
+5. Set primary model to Cursor, not Anthropic:
+
+   ```bash
+   openclaw config set agents.defaults.model.primary "cursor-local/auto"
+   openclaw gateway restart
+   ```
+
+6. Verify:
+
+   ```bash
+   openclaw cursor-brain doctor
+   curl -s http://127.0.0.1:18790/v1/health
+   ```
+
+Use **`ssh -t user@host`** for interactive `setup` / model selection. On non-TTY sessions, run `openclaw cursor-brain setup` manually after install.
+
+### After install — model selection
+
+In a TTY, interactive model selection may run automatically after install. Otherwise run:
+
+```bash
+openclaw cursor-brain setup   # choose primary & fallback models
 openclaw gateway restart      # if you changed config
 ```
 
@@ -292,6 +347,7 @@ Endpoints: `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1/health` (retu
 
 | Problem                                                            | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`runtime extension entry not found: ./dist/index.js`**           | Install without building. From the repo dir run `npm install && npm run build`, confirm `dist/index.js` exists, then `openclaw plugins install ./` again.                                                                                                                                                                                                                                                          |
 | **WARNING: dangerous code patterns (child_process / env+network)** | OpenClaw scans plugins and may show this during install. This plugin legitimately uses `child_process` to run the Cursor agent and proxy, and reads env (e.g. `CURSOR_PATH`) to configure them. The plugin only passes a minimal env whitelist to the proxy child, not full `process.env`. You can ignore this warning for this plugin.                                                                                                                                                                        |
 | **Stuck after "Provider synced"**                                  | Old versions started proxy/timers during install; fixed in current release. Upgrade to latest.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **No model selection during install**                              | Runs only in a TTY; otherwise run `openclaw cursor-brain setup` after install.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
