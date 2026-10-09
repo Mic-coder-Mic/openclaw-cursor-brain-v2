@@ -621,6 +621,36 @@ function saveModelSelection(primary: string, fallbacks: string[], proxyPort: num
   writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
+/** OpenClaw 2026.7 CLI subprocesses may not expose runtime.config.writeConfigFile — fall back to direct disk write. */
+function persistOpenClawConfigPatch(
+  patch: Record<string, unknown>,
+  api: OpenClawPluginApi,
+  logger: { info: (m: string) => void; warn: (m: string) => void },
+  successMessage: string,
+  preferDirectWrite: boolean,
+): void {
+  const writeDirect = () => {
+    mkdirSync(dirname(OPENCLAW_CONFIG_PATH), { recursive: true });
+    writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(patch, null, 2) + "\n");
+    logger.info(successMessage);
+  };
+
+  if (preferDirectWrite || typeof api.runtime?.config?.writeConfigFile !== "function") {
+    try {
+      writeDirect();
+    } catch (err: any) {
+      logger.warn(`Could not write config: ${err?.message ?? String(err)}`);
+    }
+    return;
+  }
+
+  void api.runtime.config.writeConfigFile(patch as any).then(() => {
+    logger.info(successMessage);
+  }).catch((err: any) => {
+    logger.warn(`Could not write config: ${err?.message ?? String(err)}`);
+  });
+}
+
 const VALID_SOURCES = ["npm", "archive", "path"] as const;
 
 /**
@@ -1007,28 +1037,13 @@ const plugin = {
             const patchInstallRecord = (patch as any).plugins?.installs?.[PLUGIN_ID];
             if (patchInstallRecord?.source === "tarball") patchInstallRecord.source = "archive";
 
+            const providerSyncedMsg = `Provider "${PROVIDER_ID}" synced (${discovered.length} models, port ${proxyPort})`;
+            const preferDirectWrite = isPluginsInstall || isSetupOnly;
+            persistOpenClawConfigPatch(patch, api, api.logger, providerSyncedMsg, preferDirectWrite);
+            doSyncInstallRecord();
             if (isPluginsInstall) {
-              try {
-                mkdirSync(dirname(OPENCLAW_CONFIG_PATH), { recursive: true });
-                writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(patch, null, 2) + "\n");
-                api.logger.info(`Provider "${PROVIDER_ID}" synced (${discovered.length} models, port ${proxyPort})`);
-                doSyncInstallRecord();
-                maybeSchedulePostInstallSetup();
-                setImmediate(() => fixInstallRecordSourceOnDisk(pluginDir));
-              } catch (err: any) {
-                api.logger.warn(`Could not write config: ${err?.message ?? String(err)}`);
-                doSyncInstallRecord();
-                maybeSchedulePostInstallSetup();
-                setImmediate(() => fixInstallRecordSourceOnDisk(pluginDir));
-              }
-            } else {
-              api.runtime.config.writeConfigFile(patch as any).then(() => {
-                api.logger.info(`Provider "${PROVIDER_ID}" synced (${discovered.length} models, port ${proxyPort})`);
-                doSyncInstallRecord();
-              }).catch((err: any) => {
-                api.logger.warn(`Could not write config: ${err?.message ?? String(err)}`);
-                doSyncInstallRecord();
-              });
+              maybeSchedulePostInstallSetup();
+              setImmediate(() => fixInstallRecordSourceOnDisk(pluginDir));
             }
           }
           }
